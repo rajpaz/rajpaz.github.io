@@ -1,0 +1,114 @@
+---
+title: "Course project"
+author: "Rajesh"
+date: "March 16, 2015"
+output: html_document
+---
+# Course Project Submission
+
+The following are steps I took to build a machine learning model. 
+
+## Summary
+
+* load data
+* inspect predictors to see anomalies, plot predictors
+* clean data 
+* choose algorithm
+* determine algorithm parameters
+* cross validate to determine reduce number of predictors
+* compute OOB sample
+* predict on test set
+
+# Details
+
+## Load the data 
+
+```{r}
+library(caret);
+library(randomForest);
+library(gridExtra);
+
+set.seed(042966)
+
+training = read.csv("~/Downloads/pml-training.csv");
+testing = read.csv("~/Downloads/pml-testing.csv")
+
+training$classe = as.factor(training$classe)
+```
+
+## Inspect the data
+
+Looked at the number of variables. Also saw that some of the variables had NAs. Also observed that some of variables were derived quantities like std, var, skew, etc. I decide to eliminate all columns with NAs as well as derived quantities. I was not sure of the latter (derived quantities) but I was hoping that the ML algorithm would be able to deduce dependencies on derived quantities by itself. 
+
+```{r}
+dim(training)
+cleanTraining = training[,-(grep("kurtosis|min|total|max|kurtosis|skew|stddev|var|avg|skew|amplitude|window|X|timestamp",colnames(training)))]
+dim(cleanTraining)
+colnames(cleanTraining)
+```
+
+## PreProcessing
+
+I looked at the study and I felt that I didnt think that there would be any dependancy in data coming from the four sensors and the associated data. And even if there was any dependancy, I wanted to deduce it from the algorithm. So I didnt any preprocessing like PCA
+
+## Selecting model 
+
+Given that this was a classification problem and the lecture notes indicated that Random Forest (RF) and boosting were the most successful algorithms, I decided to start with RF.
+
+Since RF splits the training set by itself (into two thirds and one third) I did not split the training set into two parts for cross validation. 
+
+## Fit the model 
+Since I chose RF, i needed to the set the number of trees. The default is 500. I didnt know if 500 was too low or too high. 
+
+```{r}
+# Fit the RF model 
+numTree = 500;
+modelRf <- randomForest(classe ~., cleanTraining, importance=TRUE, ntree=numTree)
+print(modelRf) # view results 
+modelRf$confusion # confusion matrix
+outofSampleError50 = 1-sum(diag(modelRf$confusion))/sum(modelRf$confusion)
+outofSampleError50
+plot(1:numTree,modelRf$err.rate[,1],main="OOB error versus #Tree")
+#importance(modelRf) # importance of each predictor
+ind = colnames(cleanTraining[order(importance(modelRf,type = 1),decreasing=TRUE)])
+ind[1:15]
+```
+It turns out I didnt need 500 trees. After 100 trees, the OOB error does not decrease significantly. 
+
+# Cross Validation
+Next I tried to determine whether I needed the 50 variables or I could reduce it to a smaller set. I used the rfcv function to do this. Since I new that I didnt need 500 trees, I used a smaller number of trees to do the cross validation. This took a long time if I ran it with 500 trees. 
+
+```{r}
+indexClasse = grep("classe",colnames(cleanTraining))
+rf.cv = rfcv(cleanTraining[,-indexClasse],cleanTraining[,indexClasse],
+             cv.fold=10,ntree=100)
+plot.new();
+with(rf.cv, plot(n.var, error.cv,log="x", type="o", lwd=2, main ="error versus #variables\n(based on Cross Validation)"))
+```
+
+As you can see with the above plot about 12 variables is all you need. The 12 most variable are 
+```{r}
+colnames(cleanTraining[ind[1:12]])
+```
+Next I run the randomForest model with 12 most important variables. 
+```{r}
+modelRf2 = randomForest(cleanTraining$classe ~ ., cleanTraining[ind[1:12]],importance=TRUE,ntree=500)
+modelRf2$confusion # confusion matrix
+# Error with 12 variables
+outofSampleError12= 1-sum(diag(modelRf2$confusion))/sum(modelRf2$confusion)
+```
+Comparing the results from the original run with 50 variables.While the model with 50 variables has lower error both are under one per cent.  
+```{r}
+c(outofSampleError50,outofSampleError12)
+```
+
+## Predicting
+Finally I run the model with test data with two models (50 variables and 12 variables)
+```{r}
+predictions50 = predict(modelRf,testing)
+predictions12 = predict(modelRf2,testing)
+predictions50 == predictions12
+```
+# What about other models
+
+I tried boosting since that was mentioned as the other widely used algorithm. However, I couldnt get any results even after waiting for 30 minutes. Besides, I was getting such low errors with RF, I decided not to pursue other algorithms further.
